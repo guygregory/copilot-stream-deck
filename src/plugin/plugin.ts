@@ -46,7 +46,7 @@ class DashboardAction extends SingletonAction {
     for (const board of this.boards.values()) board.favorites = new Set(settings.favorites ?? []);
   }
 
-  /** Opens sessions through the app's companion API when it is on, otherwise through the bridge deep link. */
+  /** Opens sessions through the companion API or a validated deep link, using the bridge when no sidebar entry is available. */
   private async execute(command: Command, board: Dashboard): Promise<void> {
     if (command.type === "openSession" && (this.companion.state || this.companion.feed)) {
       try {

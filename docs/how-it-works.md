@@ -19,6 +19,8 @@ A visible conversation is not proof that its runtime is running. Copilot can sto
 
 A missing bridge is labelled **No bridge** and **Bridge not running**. When the Companion device integration is on, navigation and status keep working without a bridge.
 
+While the companion navigation feed is connected, optional bridge failures stay in tile settings and do not replace the Home label with **Error: see settings**. Bridge-dependent features still show their availability. Failed key commands and loss of both data sources still show an error.
+
 ## Saved values
 
 When a session has no live bridge, the plugin falls back to that session's local history file (`~/.copilot/session-state/<id>/events.jsonl`, under `%USERPROFILE%` on Windows). It reads the file without changing it, scanning backwards from the end, and shows the last saved model, context use, context limit and AI credits.
@@ -31,7 +33,9 @@ When a session has no live bridge, the plugin falls back to that session's local
 
 ## Open in app
 
-Without the Companion device integration, **Open in app** fetches the session's `app_url` from Copilot's `list_sessions_and_chats` catalog and opens it through the system URL handler (the registered Windows handler, or `open` on macOS). Only a `ghapp://sessions/` link matching the selected session ID is accepted.
+**Open in app** first uses the Companion device integration. If that action is unavailable, the plugin opens a `ghapp://sessions/` link for a validated session ID in the current app sidebar feed, without needing a running bridge.
+
+Without a matching sidebar entry, the bridge fetches the session's `app_url` from Copilot's current `list_sessions_and_chats` catalog, rather than relying on its cached activity list. Links use the system URL handler (the registered Windows handler, or `open` on macOS), and only a `ghapp://sessions/` link matching the selected session ID is accepted.
 
 It does not call the agent's `navigate_to` tool, which can produce a "wants to switch you" prompt from background sessions. Once the system accepts the launch, the tile says **Open requested** and ignores repeat presses until you leave the screen. This does not prove the app finished switching or started the session runtime, and it never approves a host prompt.
 
