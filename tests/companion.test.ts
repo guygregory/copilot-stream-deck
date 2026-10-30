@@ -78,6 +78,31 @@ test("voice tile lives on the session view and follows the app's active session"
   assert.equal(board.isVoice(8), true);
 });
 
+test("session open falls back to a validated sidebar link without a bridge", async () => {
+  const client = new CompanionClient();
+  const opened: string[] = [];
+  const openLink = async (url: string) => { opened.push(url); };
+  client.feed = { projects: [], sessions: [{ id: "inactive", name: "Inactive", kind: "chat", activity: "idle" }] };
+  client.send = async () => { throw new Error("session.open: unavailable"); };
+  await client.openSession("inactive", openLink);
+  assert.deepEqual(opened, ["ghapp://sessions/inactive"]);
+  await assert.rejects(client.openSession("missing", openLink), /unavailable/);
+  client.feed.sessions.push({ id: "../unsafe", name: "Invalid", kind: "chat", activity: "idle" });
+  await assert.rejects(client.openSession("../unsafe", openLink), /Invalid Copilot session link/);
+  await assert.rejects(client.openSession("inactive", async () => { throw new Error("URL handler failed"); }), /URL handler failed/);
+  client.feed = undefined;
+  await assert.rejects(client.openSession("inactive", openLink), /unavailable/);
+  assert.equal(opened.length, 1);
+});
+
+test("an acknowledged companion open does not also launch a deep link", async () => {
+  const client = new CompanionClient();
+  const sent: unknown[] = [];
+  client.send = async (request) => { sent.push(request); };
+  await client.openSession("attached", async () => { assert.fail("Deep link must not run after an acknowledged open"); });
+  assert.deepEqual(sent, [{ type: "session.open", sessionId: "attached" }]);
+});
+
 test("companion client sends authenticated voice toggles and tracks recording", async () => {
   const dir = await mkdtemp(join(tmpdir(), "companion-"));
   const servers: WebSocketServer[] = [];

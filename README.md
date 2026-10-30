@@ -31,6 +31,8 @@ See all [features](docs/features.md).
 
 For the optional session bridge, automatic profile switching and requirements, see [Install and set up](docs/install.md).
 
+Navigation and opening sidebar sessions work without a bridge; optional bridge diagnostics stay in tile settings rather than turning Home into an error. See [How it works](docs/how-it-works.md).
+
 **Windows and macOS:** see the [setup requirements](docs/install.md#requirements) and install the optional bridge from the tag matching your plugin release.
 
 ## Documentation

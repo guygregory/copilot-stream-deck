@@ -2,23 +2,28 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once, EventEmitter } from "node:events";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { WebSocketServer, type WebSocket } from "ws";
 import { startBridge } from "../src/bridge/server.js";
+import { bridgeDirectory } from "../src/shared/paths.js";
 import type { Command } from "../src/shared/protocol.js";
 import { snapshot } from "./fixtures.js";
 
-test("compiled plugin registers, renders 15 keys, navigates, animates and stops hidden keys", { timeout: 20000 }, async () => {
+test("compiled plugin navigates, reports Home health, animates and stops hidden keys", { timeout: 20000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "copilot-deck-plugin-test-"));
-  const directory = join(root, "CopilotStreamDeck", "bridges");
+  const directory = bridgeDirectory(process.platform, { LOCALAPPDATA: root }, root);
   const commands: Command[] = [];
   const otherCommands: Command[] = [];
   const events = new EventEmitter();
   let otherHold: Promise<void> | undefined;
   let otherStarted = false;
+  let bridgeErrors: string[] = [];
+  let bridgeFailure = false;
+  let commandFailure = false;
+  let navigation: WebSocketServer | undefined;
   const otherBridge = await startBridge({
     snapshot: async () => {
       otherStarted = true;
@@ -33,10 +38,20 @@ test("compiled plugin registers, renders 15 keys, navigates, animates and stops 
     },
     command: async (command) => { otherCommands.push(command); },
   }, "other", directory);
-  const bridge = await startBridge({ snapshot: async () => ({
-    ...snapshot(), agents: [{ id: "agent-1", name: "Attached worker", agentType: "task", status: "running", startedAt: "2026-10-20T22:00:00Z" }],
-    capabilities: { ...snapshot().capabilities, agents: { available: true } },
-  }), command: async (command) => { commands.push(command); } }, "attached", directory);
+  const bridge = await startBridge({
+    snapshot: async () => {
+      if (bridgeFailure) throw new Error("Runtime unavailable");
+      return {
+        ...snapshot(), errors: bridgeErrors,
+        agents: [{ id: "agent-1", name: "Attached worker", agentType: "task", status: "running", startedAt: "2026-10-20T22:00:00Z" }],
+        capabilities: { ...snapshot().capabilities, agents: { available: true } },
+      };
+    },
+    command: async (command) => {
+      if (commandFailure) throw new Error("Command failed");
+      commands.push(command);
+    },
+  }, "attached", directory);
   const exited = spawn(process.execPath, ["-e", ""]);
   await once(exited, "exit");
   await delay(20);
@@ -152,6 +167,79 @@ test("compiled plugin registers, renders 15 keys, navigates, animates and stops 
     await waitFor(() => otherCommands.length === 1);
     assert.deepEqual(otherCommands, [{ type: "setMcp", name: "example", enabled: false }]);
     assert.equal(commands.length, 1);
+    send("keyDown", 12);
+    await waitFor(() => images("key-12").at(-1)?.includes(">Home<") === true);
+    bridgeErrors = ["details: runtime unavailable", "mcp: timeout", "sessions: stale sidebar"];
+    send("keyDown", 13);
+    await waitFor(() => images("key-12").at(-1)?.includes("Error: see settings") === true);
+
+    navigation = new WebSocketServer({ host: "127.0.0.1", port: 0, path: "/v1/logitech/navigation" });
+    navigation.on("connection", (client) => client.send(JSON.stringify({
+      type: "snapshot",
+      voiceDictation: { available: false, recording: false, recordingMode: "toggle" },
+      activeSession: { id: "attached" },
+      root: { items: [{ id: "p1", kind: "project", label: "Feed project" }] },
+      collections: { "project:p1": { items: [
+        { id: "attached", kind: "workspace", label: "Working session", status: "idle" },
+        { id: "other", kind: "workspace", label: "Other session", status: "idle" },
+      ] } },
+    })));
+    await once(navigation, "listening");
+    const navAddress = navigation.address();
+    assert.ok(navAddress && typeof navAddress !== "string");
+    const run = join(root, ".copilot", "run");
+    await mkdir(run, { recursive: true });
+    await writeFile(join(run, "logitech-navigation-v1.json"), JSON.stringify({
+      schemaVersion: 1, websocketUrl: `ws://127.0.0.1:${navAddress.port}/v1/logitech/navigation`, bearerToken: "a".repeat(43),
+    }));
+    send("keyDown", 13);
+    await waitFor(() => images("key-0").at(-1)?.includes(">New<") === true && images("key-12").at(-1)?.includes(">Home<") === true);
+    send("propertyInspectorDidAppear", 12);
+    const status = async (expected?: string | RegExp): Promise<{ error: string; connected: boolean }> => {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const before = messages.filter((row) => row.event === "sendToPropertyInspector").length;
+        socket.send(JSON.stringify({
+          event: "sendToPlugin", action: "com.haflidif.copilot.dashboard", context: "key-12", payload: { type: "status" },
+        }));
+        await waitFor(() => messages.filter((row) => row.event === "sendToPropertyInspector").length > before);
+        const result = messages.filter((row) => row.event === "sendToPropertyInspector").at(-1)!.payload as { error: string; connected: boolean };
+        if (expected === undefined || (typeof expected === "string" ? result.error === expected : expected.test(result.error))) return result;
+      }
+      assert.fail(`Settings did not report ${expected}`);
+    };
+    assert.equal((await status("details: runtime unavailable\nmcp: timeout")).connected, true);
+    send("keyDown", 1);
+    await waitFor(() => images("key-0").at(-1)?.includes("Feed project") === true);
+    send("keyDown", 12);
+    await waitFor(() => images("key-12").at(-1)?.includes(">Home<") === true);
+    bridgeFailure = true;
+    assert.equal((await status(/Runtime unavailable/)).connected, true);
+    assert.match(images("key-12").at(-1)!, />Home</);
+    bridgeFailure = false;
+    bridgeErrors = [];
+    assert.equal((await status("")).error, "");
+
+    commandFailure = true;
+    send("keyDown", 6);
+    await waitFor(() => images("key-0").at(-1)?.includes("Open in app") === true);
+    send("keyDown", 7);
+    await waitFor(() => images("key-0").at(-1)?.includes("example") === true);
+    send("keyDown", 0);
+    await waitFor(() => images("key-0").at(-1)?.includes("Confirm") === true);
+    send("keyDown", 0);
+    await waitFor(() => images("key-12").at(-1)?.includes("Error: see settings") === true);
+    assert.ok(messages.some((row) => row.event === "showAlert" && row.context === "key-0"));
+    commandFailure = false;
+    send("keyDown", 12);
+    await waitFor(() => images("key-12").at(-1)?.includes(">Home<") === true);
+
+    bridgeFailure = true;
+    await status(/Runtime unavailable/);
+    for (const client of navigation.clients) client.terminate();
+    await waitFor(() => images("key-12").at(-1)?.includes("Error: see settings") === true);
+    bridgeFailure = false;
+    send("keyDown", 13);
+    await waitFor(() => images("key-12").at(-1)?.includes(">Home<") === true);
     for (let i = 0; i < 15; i++) send("willDisappear", i);
     await delay(250);
     const count = messages.filter((row) => row.event === "setImage").length;
@@ -162,6 +250,10 @@ test("compiled plugin registers, renders 15 keys, navigates, animates and stops 
     await once(child, "exit");
     for (const client of server.clients) client.terminate();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    if (navigation) {
+      for (const client of navigation.clients) client.terminate();
+      await new Promise<void>((resolve, reject) => navigation!.close((error) => error ? reject(error) : resolve()));
+    }
     await bridge.close();
     await otherBridge.close();
     await rm(root, { recursive: true });

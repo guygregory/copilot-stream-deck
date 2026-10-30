@@ -92,6 +92,7 @@ export class Dashboard {
   private history: View[] = [];
   snapshot?: Snapshot;
   error?: string;
+  warning?: string;
   busy = false;
   loadingDetails = false;
   savedDetails?: SessionDetails;
