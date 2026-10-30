@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { decodeToolResult, deadline, openSessionLink, validateSessionLink, type JoinedSession } from "./app-tools.js";
+import { decodeToolResult, deadline, type JoinedSession } from "./app-tools.js";
+import { openSessionLink, validateSessionLink } from "../shared/session-link.js";
 import { finite, parseAgents, record, text, type AppSession, type Command, type McpServer, type ModelOption, type Project, type Snapshot } from "../shared/protocol.js";
 
 export function normalizeSessions(value: unknown): AppSession[] {
@@ -264,7 +265,6 @@ export class AppProvider {
     const snapshot = await this.snapshot();
     switch (command.type) {
       case "openSession": {
-        if (!snapshot.sessions.some((row) => row.id === command.id)) throw new Error("Session is no longer available");
         if (!snapshot.capabilities.openSession.available) throw new Error("Opening sessions is unavailable");
         const catalog = await this.appTool("list_sessions_and_chats");
         if (!Array.isArray(catalog)) throw new Error("App session catalog is not an array");

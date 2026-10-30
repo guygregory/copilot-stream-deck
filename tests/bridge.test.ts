@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeToolResult, openSessionLink, validateSessionLink } from "../src/bridge/app-tools.js";
+import { decodeToolResult } from "../src/bridge/app-tools.js";
+import { openSessionLink, validateSessionLink } from "../src/shared/session-link.js";
 import { bridgeDirectory } from "../src/shared/paths.js";
 import { AppProvider, nestedSessions, normalizeSessions } from "../src/bridge/provider.js";
 import { startBridge } from "../src/bridge/server.js";
@@ -148,7 +149,23 @@ test("native command failures propagate and stale session targets are rejected",
     await provider.snapshot();
     session.rpc.tools.execute = async () => ({ resultType: "denied", textResultForLlm: "Denied by host" });
     await assert.rejects(provider.command({ type: "openSession", id: "attached" }), /Denied by host/);
+    session.rpc.tools.execute = async () => ({ resultType: "success", textResultForLlm: "[]" });
     await assert.rejects(provider.command({ type: "openSession", id: "deleted" }), /no longer available/);
+  } finally { provider.dispose(); }
+});
+
+test("open checks the current app catalog rather than the cached activity list", async () => {
+  const session = joinedSession();
+  const opened: string[] = [];
+  const provider = new AppProvider(session, async (url) => { opened.push(url); });
+  try {
+    await provider.snapshot();
+    session.rpc.tools.execute = async () => ({
+      resultType: "success",
+      textResultForLlm: JSON.stringify([{ id: "new-session", app_url: "ghapp://sessions/new-session" }]),
+    });
+    await provider.command({ type: "openSession", id: "new-session" });
+    assert.deepEqual(opened, ["ghapp://sessions/new-session"]);
   } finally { provider.dispose(); }
 });
 

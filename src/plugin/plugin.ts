@@ -48,12 +48,13 @@ class DashboardAction extends SingletonAction {
 
   /** Opens sessions through the app's companion API when it is on, otherwise through the bridge deep link. */
   private async execute(command: Command, board: Dashboard): Promise<void> {
-    if (command.type === "openSession" && this.companion.state) {
+    if (command.type === "openSession" && (this.companion.state || this.companion.feed)) {
       try {
-        await this.companion.send({ type: "session.open", sessionId: command.id });
+        await this.companion.openSession(command.id);
         return;
       } catch (error) {
-        streamDeck.logger.warn(`Companion open failed, using deep link: ${error instanceof Error ? error.message : String(error)}`);
+        if (this.companion.feed?.sessions.some((row) => row.id === command.id)) throw error;
+        streamDeck.logger.warn(`Companion open failed, using bridge: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     if (command.type === "newChat") {
@@ -100,7 +101,7 @@ class DashboardAction extends SingletonAction {
       board.favorites = new Set(this.settings.favorites ?? []);
       board.voice = this.companion.state;
       const other = this.boards.values().next().value;
-      if (other) { board.snapshot = other.snapshot; board.error = other.error; }
+      if (other) { board.snapshot = other.snapshot; board.error = other.error; board.warning = other.warning; }
       this.boards.set(deviceId, board);
     }
     return board;
@@ -254,7 +255,9 @@ class DashboardAction extends SingletonAction {
     const feed = this.companion.feed;
     const snapshot = feed ? withNavFeed(state.snapshot, feed) : state.snapshot;
     board.snapshot = snapshot;
-    board.error = snapshot ? (snapshot.errors.length ? snapshot.errors.join("\n") : undefined) : state.error;
+    const diagnostic = snapshot ? (snapshot.errors.length ? snapshot.errors.join("\n") : undefined) : state.error;
+    board.warning = feed ? diagnostic ?? state.error : undefined;
+    board.error = feed ? undefined : diagnostic;
   }
 
   private report(error: unknown): void {
@@ -293,7 +296,7 @@ class DashboardAction extends SingletonAction {
       connected: Boolean(board?.snapshot),
       bridgeSessionId: board?.snapshot?.bridgeSessionId ?? "",
       attachedSession: board?.snapshot?.details?.name ?? "",
-      error: board?.error ?? "",
+      error: [board?.error, board?.warning].filter(Boolean).join("\n"),
       detailsMessage: board?.detailsMessage ?? "",
       projects: board?.snapshot?.projects.length ?? 0,
       sessions: board?.snapshot?.sessions.length ?? 0,

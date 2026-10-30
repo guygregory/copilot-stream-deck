@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
 import type { Activity, AppSession, Project, SessionDetails, Snapshot } from "../shared/protocol.js";
+import { openSessionLink, validateSessionLink } from "../shared/session-link.js";
 
 // Talks to the Copilot app's "Companion device integration" experiment (the same local
 // API the Logitech keypad uses). It is undocumented, so every message is validated.
@@ -279,6 +280,16 @@ export class CompanionClient {
       socket.send(JSON.stringify({ ...request, requestId }));
     });
     if (status !== "executed") throw new Error(`${request.type}: ${status}`);
+  }
+
+  /** Opening a sidebar session does not need its runtime or a bridge to be running. */
+  async openSession(id: string, openLink = openSessionLink): Promise<void> {
+    try {
+      await this.send({ type: "session.open", sessionId: id });
+    } catch (error) {
+      if (!this.feed?.sessions.some((row) => row.id === id)) throw error;
+      await openLink(validateSessionLink(`ghapp://sessions/${id}`, id));
+    }
   }
 
   /** Starts or stops dictation in the app's active session. */
